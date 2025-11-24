@@ -96,7 +96,7 @@ for k = 1:K_inner
 
         % J. Objective Calculation (1 - F1)
         if isfield(fold_metrics, 'PositiveF1_score') && ~isnan(fold_metrics.PositiveF1_score)
-            inner_objectives(k) = 1 - fold_metrics.PositiveF1_score;
+            inner_objectives(k) = 1 - fold_metrics.PositiveAUC_ROC;
         else
             inner_objectives(k) = 1.0; % Penalty for NaN result
         end
@@ -120,4 +120,6 @@ UserData.FoldMetrics   = inner_metrics_cell;
 
 % Garbage collection to manage GPU memory
 clear net X_train_norm X_val_norm;
+reset(gpuDevice); % Force VRAM cleanup
+
 end

@@ -72,7 +72,7 @@ fixedNetParams.MaxEpochs = 100;
 fixedNetParams.Verbose = 0;
 fixedNetParams.ExecutionEnvironment = 'gpu';
 fixedNetParams.ValidationFrequency = 50;
-fixedNetParams.ValidationPatience = 20;
+fixedNetParams.ValidationPatience = 12;
 
 % MASTER CLASS LIST - Enforce Strict Categorical Order
 rawCats = categories(FT.(responseName));
