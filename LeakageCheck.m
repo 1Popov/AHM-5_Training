@@ -1,12 +1,13 @@
 function [isLeakFree, reportTbl] = LeakageCheck(tbl1, tbl2)
-% LEAKAGECHECK Verify no overlap in SourceID and report class balance.
+% LEAKAGECHECK Verify no overlap in Lineage Identifier and report class balance.
 %   [isLeakFree, reportTbl] = LeakageCheck(trainTbl, testTbl)
 %
 %   Inputs:
 %     tbl1, tbl2 - Tables containing 'SourceID' and 'AHM_7_Class'.
+%                  (Optional: 'Dataset', 'OriginalStem' for ESC50 exception)
 %
 %   Outputs:
-%     isLeakFree - Logical true if sets are disjoint by SourceID.
+%     isLeakFree - Logical true if sets are disjoint.
 %     reportTbl  - Summary of rows, Heli counts, and Other counts.
 
 % --- 1. Input Validation ---
@@ -23,20 +24,37 @@ for T = {tbl1, tbl2}
     end
 end
 
-% --- 2. Leakage Verification (SourceID) ---
-% Convert to string to ensure robust comparison
-src1 = string(tbl1.SourceID);
-src2 = string(tbl2.SourceID);
+% --- 2. Define Effective Lineage Key ---
+    function keys = get_lineage_keys(t)
+        keys = string(t.SourceID);
 
+        % ESC50 EXCEPTION:
+        % ESC50 SourceIDs (e.g., "131943") are not unique across different
+        % official folds/labels. We must use OriginalStem (e.g., "2-131943-A-38")
+        % to correctly identify distinct recordings.
+        if ismember('Dataset', t.Properties.VariableNames) && ...
+                ismember('OriginalStem', t.Properties.VariableNames)
+
+            isESC = strcmpi(string(t.Dataset), "ESC50");
+            if any(isESC)
+                keys(isESC) = string(t.OriginalStem(isESC));
+            end
+        end
+    end
+
+src1 = get_lineage_keys(tbl1);
+src2 = get_lineage_keys(tbl2);
+
+% --- 3. Leakage Verification ---
 intersectItems = intersect(src1, src2);
 isLeakFree = isempty(intersectItems);
 
 if ~isLeakFree
-    fprintf(2, 'LeakageCheck: WARNING! Found %d overlapping SourceIDs.\n', numel(intersectItems));
+    fprintf(2, 'LeakageCheck: WARNING! Found %d overlapping Lineage Keys.\n', numel(intersectItems));
     disp(head(intersectItems)); % Show first few offenders
 end
 
-% --- 3. Distribution Stats ---
+% --- 4. Distribution Stats ---
     function [nHeli, nOther] = count_classes(t)
         lbls = string(t.AHM_7_Class);
         nHeli = sum(lbls == "Helicopter");
@@ -50,8 +68,7 @@ end
 r1 = h1 / max(1, o1);
 r2 = h2 / max(1, o2);
 
-% --- 4. Build Report ---
-% Determine variable names from input if possible
+% --- 5. Build Report ---
 n1 = inputname(1); if isempty(n1), n1 = 'Set_1'; end
 n2 = inputname(2); if isempty(n2), n2 = 'Set_2'; end
 
