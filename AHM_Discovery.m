@@ -5,6 +5,7 @@
 %   1. Includes Hold-Out Set Evaluation for every fold.
 %   2. Expanded Hyperparameter Ranges based on Pilot Run (Capacity Increase).
 %   3. Updated Compute Constraints for larger networks.
+%   4. ENRICHED LOGGING: Detailed class counts and ratios.
 
 delete(gcp('nocreate'));
 clear; clc; close all;
@@ -85,17 +86,18 @@ rawCats = categories(FT.(responseName));
 fixedNetParams.ClassNames = categorical(rawCats, rawCats, 'Ordinal', false);
 refClassNames = cellstr(fixedNetParams.ClassNames);
 
-% --- OPTIMIZED SEARCH SPACE (RE-TUNED RANGES) ---
-% Shifted based on Pilot Run hitting ceilings.
-% Networks need more capacity for raw WST, and higher Dropout/Lambda to control it.
+% --- OPTIMIZED SEARCH SPACE (FINAL REFINEMENT) ---
+% 1. Dropout shifted UP (0.40-0.75) because previous run saturated at 0.60.
+% 2. Batch Size pruned (min 4096) to maximize GPU throughput and gradient stability.
+% 3. Layers shifted UP to center on the high-capacity sweet spot found in Run 2.
 optimVars = [
-    optimizableVariable('Layer1Size', [800 2000], 'Type', 'integer')         % Was [400 1200]
-    optimizableVariable('Layer2Size', [400 1000], 'Type', 'integer')         % Was [200 600]
-    optimizableVariable('InitialLearnRate', [5e-4, 5e-3], 'Transform', 'log')
-    optimizableVariable('Lambda', [1e-5, 1e-2], 'Transform', 'log')          % Was [1e-6 1e-4]
-    optimizableVariable('DropoutP', [0.30, 0.60])                            % Was [0.10 0.40]
-    optimizableVariable('MiniBatchSize', {'1024', '2048', '4096', '8192', '16384'}, 'Type', 'categorical')
-    ];
+    optimizableVariable('Layer1Size', [1000 2400], 'Type', 'integer')        % Raised floor & ceiling
+    optimizableVariable('Layer2Size', [500 1200], 'Type', 'integer')         % Raised floor & ceiling
+    optimizableVariable('InitialLearnRate', [4e-4, 3e-3], 'Transform', 'log') % Narrowed to high-performance band
+    optimizableVariable('Lambda', [1e-6, 5e-4], 'Transform', 'log')          % Lowered ceiling (1e-2 was unused)
+    optimizableVariable('DropoutP', [0.40, 0.75])                            % CRITICAL SHIFT: Allow higher regularization
+    optimizableVariable('MiniBatchSize', {'4096', '8192', '16384'}, 'Type', 'categorical') % Pruned small batches
+];
 
 % --- MEMORY CONSTRAINT ---
 % Updated logic to handle the new larger layer limits
@@ -188,6 +190,10 @@ for outerFold = 1:K_outer
     metrics = CalculateMetrics(Y_test, Y_pred, Y_scores, char(fixedNetParams.ClassNames(1)), fixedNetParams.ClassNames);
     outerFoldResults(outerFold).TestMetrics = metrics;
 
+    % Helper to get counts
+    get_counts = @(Y) [nnz(Y == "Helicopter"), nnz(Y ~= "Helicopter")];
+    cTest = get_counts(string(Y_test));
+
     % --- 3.D EVALUATION (Hold-Out) ---
     % This evaluates the model trained on Fold X against the global unseen Test set
     fprintf('  Evaluating on Hold-Out Set (Unseen Data)...\n');
@@ -204,10 +210,15 @@ for outerFold = 1:K_outer
     outerFoldResults(outerFold).HoldOutMetrics = ho_metrics;
     outerFoldResults(outerFold).Network = net;
 
-    fprintf('  Fold %d NCV Test: Acc=%.4f, HeliF1=%.4f, HeliAUC=%.4f\n', ...
-        outerFold, metrics.Accuracy, metrics.PositiveF1_score, metrics.PositiveAUC_ROC);
-    fprintf('  Fold %d Hold-Out: Acc=%.4f, HeliF1=%.4f, HeliAUC=%.4f\n', ...
-        outerFold, ho_metrics.Accuracy, ho_metrics.PositiveF1_score, ho_metrics.PositiveAUC_ROC);
+    cHO = get_counts(string(Y_ho));
+
+    % --- ENRICHED LOGGING ---
+    fprintf('\n  [RESULT] Fold %d NCV Test (Heli: %d, Other: %d) -> Ratio 1:%.1f\n', outerFold, cTest(1), cTest(2), cTest(2)/max(1,cTest(1)));
+    fprintf('    Acc=%.4f, HeliF1=%.4f, HeliAUC=%.4f\n', metrics.Accuracy, metrics.PositiveF1_score, metrics.PositiveAUC_ROC);
+
+    fprintf('  [RESULT] Fold %d Hold-Out (Heli: %d, Other: %d) -> Ratio 1:%.1f\n', outerFold, cHO(1), cHO(2), cHO(2)/max(1,cHO(1)));
+    fprintf('    Acc=%.4f, HeliF1=%.4f, HeliAUC=%.4f\n', ho_metrics.Accuracy, ho_metrics.PositiveF1_score, ho_metrics.PositiveAUC_ROC);
+    fprintf('    (Note: Low F1 on Hold-Out is expected due to high imbalance. Trust AUC.)\n');
 
     % Memory Cleanup
     reset(gpuDevice);
